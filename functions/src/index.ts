@@ -6,6 +6,7 @@ const algoliasearch = require('algoliasearch');
 admin.initializeApp();
 
 const db = admin.firestore();
+const storage = admin.storage().bucket();
 
 exports.chatsLastMessage = functions.firestore
   .document('chats/{chatId}/messages/{messageId}')
@@ -67,4 +68,22 @@ exports.algoliaMessages = functions.firestore
     console.log(`message before ${change.before.data()} after ${change.after.data()}`)
 
     return algoliaUpdate(messagesIndex, change)
+  });
+
+exports.deleteMessageContent = functions.firestore
+  .document('chats/{chatId}/messages/{messageId}')
+  .onDelete((snap, context) => {
+    const deletedValue = snap.data();
+    if (deletedValue && deletedValue['kind']) {
+      const imagesRemovePromises = deletedValue['kind'].map((content: any) => {
+        const image = content["image"]
+        if (image) {
+          console.log("delete path: " + image.path)
+          return storage.file(image.path).delete()
+        }
+      })
+
+      return Promise.all(imagesRemovePromises);
+    }
+    return null
   });
