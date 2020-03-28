@@ -78,8 +78,14 @@ exports.deleteMessageContent = functions.firestore
       const imagesRemovePromises = deletedValue['kind'].map((content: any) => {
         const image = content["image"]
         if (image) {
-          console.log("delete path: " + image.path)
+          console.log("delete media path: " + image.path)
           return storage.file(image.path).delete()
+        }
+
+        const audio = content["audio"]
+        if (audio) {
+          console.log("delete audio path: " + audio.path)
+          return storage.file(audio.path).delete()
         }
       })
 
