@@ -79,6 +79,32 @@ exports.algoliaUsers = functions.firestore
     return algoliaUpdate(usersIndex, change)
   });
 
+exports.createMessageContent = functions.firestore
+  .document('chats/{chatId}/messages/{messageId}')
+  .onCreate((snap, context) => {
+    const createdValue = snap.data();
+    if (createdValue && createdValue['kind']) {
+      const imagesRemovePromises = createdValue['kind'].map((content: any) => {
+        const image = content["image"]
+        if (image) {
+          console.log("create media path: " + image.path)
+
+          image.timestamp = createdValue['timestamp']
+
+          return db.collection('chats').doc(context.params.chatId)
+            .collection('media').doc(image.path.replace(/\//g, "_"))
+            .set(image)
+        }
+        return null
+      }).filter(Boolean)
+
+      console.log("count: " + imagesRemovePromises.length)
+
+      return Promise.all(imagesRemovePromises);
+    }
+    return null
+  });
+
 exports.deleteMessageContent = functions.firestore
   .document('chats/{chatId}/messages/{messageId}')
   .onDelete((snap, context) => {
@@ -88,7 +114,13 @@ exports.deleteMessageContent = functions.firestore
         const image = content["image"]
         if (image) {
           console.log("delete media path: " + image.path)
-          return storage.file(image.path).delete()
+
+          return [
+            storage.file(image.path).delete(),
+            db.collection('chats').doc(context.params.chatId)
+              .collection('media').doc(image.path.replace(/\//g, "_"))
+              .delete()
+          ]
         }
 
         const audio = content["audio"]
@@ -96,7 +128,9 @@ exports.deleteMessageContent = functions.firestore
           console.log("delete audio path: " + audio.path)
           return storage.file(audio.path).delete()
         }
-      })
+
+        return null
+      }).filter(Boolean)
 
       return Promise.all(imagesRemovePromises);
     }
