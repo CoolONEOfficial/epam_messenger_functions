@@ -26,6 +26,7 @@ exports.chatsLastMessage = functions.firestore
 const algoliaClient = algoliasearch(functions.config().algolia.appid, functions.config().algolia.apikey);
 const chatsIndex = algoliaClient.initIndex('chats');
 const messagesIndex = algoliaClient.initIndex('messages');
+const usersIndex = algoliaClient.initIndex('users');
 
 function algoliaUpdate(index: SearchIndex, change: functions.Change<DocumentSnapshot>) {
   if(change.before.data() === undefined) { // insertion
@@ -68,6 +69,14 @@ exports.algoliaMessages = functions.firestore
     console.log(`message before ${change.before.data()} after ${change.after.data()}`)
 
     return algoliaUpdate(messagesIndex, change)
+  });
+
+exports.algoliaUsers = functions.firestore
+  .document('users/{userId}')
+  .onWrite((change, context) => {
+    console.log(`user before ${change.before.data()} after ${change.after.data()}`)
+
+    return algoliaUpdate(usersIndex, change)
   });
 
 exports.deleteMessageContent = functions.firestore
