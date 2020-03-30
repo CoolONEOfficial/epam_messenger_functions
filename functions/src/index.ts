@@ -110,21 +110,32 @@ exports.deleteMessageContent = functions.firestore
   .onDelete((snap, context) => {
     const deletedValue = snap.data();
     if (deletedValue && deletedValue['kind']) {
-      const imagesRemovePromises = deletedValue['kind'].map((content: any) => {
+      const kindList = deletedValue['kind']
+
+      const forward = kindList[0]['forward']
+
+      console.log("forward: " + forward)
+
+      const imagesRemovePromises = kindList.map((content: any) => {
         const image = content["image"]
         if (image) {
           console.log("delete media path: " + image.path)
 
-          return [
-            storage.file(image.path).delete(),
-            db.collection('chats').doc(context.params.chatId)
-              .collection('media').doc(image.path.replace(/\//g, "_"))
-              .delete()
-          ]
+          const promiseList = []
+
+          if (!forward) {
+            promiseList.push(storage.file(image.path).delete())
+          }
+
+          promiseList.push(db.collection('chats').doc(context.params.chatId)
+            .collection('media').doc(image.path.replace(/\//g, "_"))
+            .delete())
+
+          return promiseList
         }
 
         const audio = content["audio"]
-        if (audio) {
+        if (!forward && audio) {
           console.log("delete audio path: " + audio.path)
           return storage.file(audio.path).delete()
         }
