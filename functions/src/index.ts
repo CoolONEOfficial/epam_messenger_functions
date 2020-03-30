@@ -1,32 +1,44 @@
-import * as functions from 'firebase-functions';
+import * as functions from "firebase-functions";
 import {DocumentSnapshot} from "firebase-functions/lib/providers/firestore";
 import { SearchIndex } from "algoliasearch";
-const admin = require('firebase-admin');
-const algoliasearch = require('algoliasearch');
+const admin = require("firebase-admin");
+const algoliasearch = require("algoliasearch");
 admin.initializeApp();
 
 const db = admin.firestore();
 const storage = admin.storage().bucket();
 
 exports.chatsLastMessage = functions.firestore
-  .document('chats/{chatId}/messages/{messageId}')
-  .onCreate((snapshot, context) => {
-    const lastMessageModel = snapshot.data();
+  .document("chats/{chatId}/messages/{messageId}")
+  .onWrite((change, context) => {
 
-    if (lastMessageModel !== undefined) {
-      return db.doc(`chats/${context.params.chatId}`).update({
-        lastMessage: {
-          documentId: context.params.messageId,
-          ...lastMessageModel
+    const chatDocRef = db.doc(`chats/${context.params.chatId}`);
+
+    return chatDocRef.collection("messages").orderBy("timestamp", "desc").limit(1).get()
+      .then(async (snapshotMessages: any) => {
+        if (snapshotMessages.empty) {
+          console.log("No matching documents.");
+          return;
         }
-      }).catch((err: any) => 'error while add chat! ' + err);
-    }
+
+        const lastMessageModel = snapshotMessages.docs[0].data();
+
+        await db.doc(`chats/${context.params.chatId}`).update({
+          lastMessage: {
+            documentId: context.params.messageId,
+            ...lastMessageModel
+          }
+        }).catch((err: any) => "error while add chat! " + err);
+      })
+      .catch((err: any) => {
+        console.log("Error getting documents", err);
+      })
   });
 
 const algoliaClient = algoliasearch(functions.config().algolia.appid, functions.config().algolia.apikey);
-const chatsIndex = algoliaClient.initIndex('chats');
-const messagesIndex = algoliaClient.initIndex('messages');
-const usersIndex = algoliaClient.initIndex('users');
+const chatsIndex = algoliaClient.initIndex("chats");
+const messagesIndex = algoliaClient.initIndex("messages");
+const usersIndex = algoliaClient.initIndex("users");
 
 function algoliaUpdate(index: SearchIndex, change: functions.Change<DocumentSnapshot>) {
   if(change.before.data() === undefined) { // insertion
@@ -51,54 +63,54 @@ function algoliaUpdate(index: SearchIndex, change: functions.Change<DocumentSnap
     }
   }
 
-  console.error("something went wrong")
+  console.error("something went wrong");
   return null
 }
 
 exports.algoliaChats = functions.firestore
-  .document('chats/{chatId}')
-  .onWrite((change, context) => {
-    console.log(`chat before ${change.before.data()} after ${change.after.data()}`)
+  .document("chats/{chatId}")
+  .onWrite((change) => {
+    console.log(`chat before ${change.before.data()} after ${change.after.data()}`);
 
     return algoliaUpdate(chatsIndex, change)
   });
 
 exports.algoliaMessages = functions.firestore
-  .document('chats/{chatId}/messages/{messageId}')
-  .onWrite((change, context) => {
-    console.log(`message before ${change.before.data()} after ${change.after.data()}`)
+  .document("chats/{chatId}/messages/{messageId}")
+  .onWrite((change) => {
+    console.log(`message before ${change.before.data()} after ${change.after.data()}`);
 
     return algoliaUpdate(messagesIndex, change)
   });
 
 exports.algoliaUsers = functions.firestore
-  .document('users/{userId}')
-  .onWrite((change, context) => {
-    console.log(`user before ${change.before.data()} after ${change.after.data()}`)
+  .document("users/{userId}")
+  .onWrite((change) => {
+    console.log(`user before ${change.before.data()} after ${change.after.data()}`);
 
     return algoliaUpdate(usersIndex, change)
   });
 
 exports.createMessageContent = functions.firestore
-  .document('chats/{chatId}/messages/{messageId}')
+  .document("chats/{chatId}/messages/{messageId}")
   .onCreate((snap, context) => {
     const createdValue = snap.data();
-    if (createdValue && createdValue['kind']) {
-      const imagesRemovePromises = createdValue['kind'].map((content: any) => {
-        const image = content["image"]
+    if (createdValue && createdValue["kind"]) {
+      const imagesRemovePromises = createdValue["kind"].map((content: any) => {
+        const image = content["image"];
         if (image) {
-          console.log("create media path: " + image.path)
+          console.log("create media path: " + image.path);
 
-          image.timestamp = createdValue['timestamp']
+          image.timestamp = createdValue["timestamp"];
 
-          return db.collection('chats').doc(context.params.chatId)
-            .collection('media').doc(image.path.replace(/\//g, "_"))
+          return db.collection("chats").doc(context.params.chatId)
+            .collection("media").doc(image.path.replace(/\//g, "_"))
             .set(image)
         }
         return null
-      }).filter(Boolean)
+      }).filter(Boolean);
 
-      console.log("count: " + imagesRemovePromises.length)
+      console.log("count: " + imagesRemovePromises.length);
 
       return Promise.all(imagesRemovePromises);
     }
@@ -106,42 +118,42 @@ exports.createMessageContent = functions.firestore
   });
 
 exports.deleteMessageContent = functions.firestore
-  .document('chats/{chatId}/messages/{messageId}')
+  .document("chats/{chatId}/messages/{messageId}")
   .onDelete((snap, context) => {
     const deletedValue = snap.data();
-    if (deletedValue && deletedValue['kind']) {
-      const kindList = deletedValue['kind']
+    if (deletedValue && deletedValue["kind"]) {
+      const kindList = deletedValue["kind"];
 
-      const forward = kindList[0]['forward']
+      const forward = kindList[0]["forward"];
 
-      console.log("forward: " + forward)
+      console.log("forward: " + forward);
 
       const imagesRemovePromises = kindList.map((content: any) => {
-        const image = content["image"]
+        const image = content["image"];
         if (image) {
-          console.log("delete media path: " + image.path)
+          console.log("delete media path: " + image.path);
 
-          const promiseList = []
+          const promiseList = [];
 
           if (!forward) {
             promiseList.push(storage.file(image.path).delete())
           }
 
-          promiseList.push(db.collection('chats').doc(context.params.chatId)
-            .collection('media').doc(image.path.replace(/\//g, "_"))
-            .delete())
+          promiseList.push(db.collection("chats").doc(context.params.chatId)
+            .collection("media").doc(image.path.replace(/\//g, "_"))
+            .delete());
 
           return promiseList
         }
 
-        const audio = content["audio"]
+        const audio = content["audio"];
         if (!forward && audio) {
-          console.log("delete audio path: " + audio.path)
+          console.log("delete audio path: " + audio.path);
           return storage.file(audio.path).delete()
         }
 
         return null
-      }).filter(Boolean)
+      }).filter(Boolean);
 
       return Promise.all(imagesRemovePromises);
     }
