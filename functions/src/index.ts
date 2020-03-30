@@ -136,6 +136,12 @@ exports.deleteMessageContent = functions.firestore
           const promiseList = [];
 
           if (!forward) {
+            const pathIndex = image.path.length - 4
+            promiseList.push(storage.file([
+              image.path.slice(0, pathIndex),
+              "_200x200",
+              image.path.slice(pathIndex)
+            ].join("")).delete())
             promiseList.push(storage.file(image.path).delete())
           }
 
