@@ -40,12 +40,17 @@ const chatsIndex = algoliaClient.initIndex("chats");
 const messagesIndex = algoliaClient.initIndex("messages");
 const usersIndex = algoliaClient.initIndex("users");
 
-function algoliaUpdate(index: SearchIndex, change: functions.Change<DocumentSnapshot>) {
+function algoliaUpdate(
+  index: SearchIndex,
+  change: functions.Change<DocumentSnapshot>,
+  dataTransform = (model: any) => {}
+) {
   if(change.before.data() === undefined) { // insertion
     const ss = change.after;
     const model = ss.data();
     if(model !== undefined) {
       model.objectID = ss.id;
+      dataTransform(model);
       console.log(`save object ${model}`);
       return index.saveObject(model);
     }
@@ -58,6 +63,7 @@ function algoliaUpdate(index: SearchIndex, change: functions.Change<DocumentSnap
     const model = ss.data();
     if(model !== undefined) {
       model.objectID = ss.id;
+      dataTransform(model);
       console.log(`update object ${model}`);
       return index.partialUpdateObject(model);
     }
@@ -77,10 +83,16 @@ exports.algoliaChats = functions.firestore
 
 exports.algoliaMessages = functions.firestore
   .document("chats/{chatId}/messages/{messageId}")
-  .onWrite((change) => {
+  .onWrite((change, context) => {
     console.log(`message before ${change.before.data()} after ${change.after.data()}`);
 
-    return algoliaUpdate(messagesIndex, change)
+    return algoliaUpdate(
+      messagesIndex,
+      change,
+      (data) => {
+        data.chatId = context.params.chatId
+      }
+    )
   });
 
 exports.algoliaUsers = functions.firestore
@@ -103,7 +115,8 @@ exports.createMessageContent = functions.firestore
 
           image.timestamp = createdValue["timestamp"];
 
-          return db.collection("chats").doc(context.params.chatId)
+          return db
+            .collection("chats").doc(context.params.chatId)
             .collection("media").doc(image.path.replace(/\//g, "_"))
             .set(image)
         }
@@ -145,7 +158,8 @@ exports.deleteMessageContent = functions.firestore
             promiseList.push(storage.file(image.path).delete())
           }
 
-          promiseList.push(db.collection("chats").doc(context.params.chatId)
+          promiseList.push(db
+            .collection("chats").doc(context.params.chatId)
             .collection("media").doc(image.path.replace(/\//g, "_"))
             .delete());
 
