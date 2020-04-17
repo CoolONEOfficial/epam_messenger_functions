@@ -2,6 +2,8 @@ import * as functions from "firebase-functions";
 import {DocumentSnapshot} from "firebase-functions/lib/providers/firestore";
 import { SearchIndex } from "algoliasearch";
 const admin = require("firebase-admin");
+const FieldValue = admin.firestore.FieldValue;
+const firebase_tools = require('firebase-tools');
 const algoliasearch = require("algoliasearch");
 admin.initializeApp();
 
@@ -18,6 +20,14 @@ exports.chatsLastMessage = functions.firestore
       .then(async (snapshotMessages: any) => {
         if (snapshotMessages.empty) {
           console.log("No matching documents.");
+
+          await db.doc(`chats/${context.params.chatId}`).set({
+              lastMessage: {
+                kind: FieldValue.delete(),
+                documentId: FieldValue.delete()
+              }}, {merge: true})
+            .catch((err: any) => "error while add chat! " + err);
+
           return;
         }
 
@@ -178,4 +188,40 @@ exports.deleteMessageContent = functions.firestore
       return Promise.all(imagesRemovePromises);
     }
     return null
+  });
+
+exports.clearSavedMessages = functions
+  .runWith({
+    timeoutSeconds: 540,
+    memory: '2GB'
+  })
+  .https.onCall((data, context) => {
+    // Only allow admin users to execute this function.
+    if (!(context.auth)) {
+      throw new functions.https.HttpsError(
+        'permission-denied',
+        'Must be an user to initiate delete.'
+      );
+    }
+
+    const chatId = data.chatId;
+    console.log(
+      `User ${context.auth.uid} has requested to delete chat chats/${chatId}/messages`
+    );
+
+    // Run a recursive delete on the given document or collection path.
+    // The 'token' must be set in the functions config, and can be generated
+    // at the command line by running 'firebase login:ci'.
+    const path = `chats/${chatId}/messages`;
+    return firebase_tools.firestore
+      .delete(path, {
+        project: process.env.GCLOUD_PROJECT,
+        recursive: true,
+        yes: true
+      })
+      .then(() => {
+        return {
+          path: path
+        };
+      });
   });
