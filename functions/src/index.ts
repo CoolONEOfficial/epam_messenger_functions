@@ -16,7 +16,10 @@ exports.chatsLastMessage = functions.firestore
 
     const chatDocRef = db.doc(`chats/${context.params.chatId}`);
 
-    return chatDocRef.collection("messages").orderBy("timestamp", "desc").limit(1).get()
+    return chatDocRef.collection("messages")
+      .orderBy("timestamp", "desc")
+      .limit(1)
+      .get()
       .then(async (snapshotMessages: any) => {
         if (snapshotMessages.empty) {
           console.log("No matching documents.");
@@ -96,13 +99,20 @@ exports.algoliaMessages = functions.firestore
   .onWrite((change, context) => {
     console.log(`message before ${change.before.data()} after ${change.after.data()}`);
 
-    return algoliaUpdate(
-      messagesIndex,
-      change,
-      (data) => {
-        data.chatId = context.params.chatId
-      }
-    )
+    return db.doc(`chats/${context.params.chatId}`).get()
+      .then(async (snapshot: any) => {
+        await algoliaUpdate(
+          messagesIndex,
+          change,
+          (data) => {
+            data.chatId = context.params.chatId
+            data.chatUsers = snapshot.data()["users"]
+          }
+        );
+      })
+      .catch((err: any) => {
+        console.log("Error getting documents", err);
+      })
   });
 
 exports.algoliaUsers = functions.firestore
