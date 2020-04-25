@@ -333,11 +333,17 @@ exports.createPersonalCorr = functions
 
 exports.personalCorrNames = functions.firestore
   .document("users/{userId}/contacts/{contactId}")
-  .onUpdate((change, context) => {
+  .onWrite((change, context) => {
+    const oldContact = change.before.data()
+    if (oldContact === undefined) {
+      return null
+    }
+
     const contact = change.after.data()
-    if (contact && "userId" in contact) {
+    if ((contact && "userId" in contact) || "userId" in oldContact) {
+      const contactUserId = contact !== undefined ? contact.userId : oldContact.userId
       return db.collection("chats")
-        .where('type.personalCorr.between', 'array-contains', contact.userId)
+        .where('type.personalCorr.between', 'array-contains', contactUserId)
         .get()
         .then(async (personalCorrs: any) => {
           for (const personalCorrDoc of personalCorrs.docs) {
@@ -345,8 +351,17 @@ exports.personalCorrNames = functions.firestore
             if (personalCorrData) {
               const betweenNames = personalCorrData.type.personalCorr.betweenNames
               const updateIndex = personalCorrData.type.personalCorr.between
-                .indexOf(contact.userId)
-              betweenNames[updateIndex] = contact.localName
+                .indexOf(contactUserId)
+              if (contact !== undefined) {
+                betweenNames[updateIndex] = contact.localName
+              } else {
+                const user = await db.doc(`users/${contactUserId}`).get()
+                const userData = user.data()
+                if (userData !== undefined) {
+                  betweenNames[updateIndex] = userData.name + " " + userData.surname
+                }
+              }
+
               await db.doc(`chats/${personalCorrDoc.id}`).set({
                 type: {
                   personalCorr: {
