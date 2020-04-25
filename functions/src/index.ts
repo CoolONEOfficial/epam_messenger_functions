@@ -53,30 +53,30 @@ const chatsIndex = algoliaClient.initIndex("chats");
 const messagesIndex = algoliaClient.initIndex("messages");
 const usersIndex = algoliaClient.initIndex("users");
 
-function algoliaUpdate(
+async function algoliaUpdate(
   index: SearchIndex,
   change: functions.Change<DocumentSnapshot>,
-  dataTransform = (model: any) => {}
+  dataTransform = async (model: any) => {}
 ) {
-  if(change.before.data() === undefined) { // insertion
+  if (change.before.data() === undefined) { // insertion
     const ss = change.after;
     const model = ss.data();
-    if(model !== undefined) {
+    if (model !== undefined) {
       model.objectID = ss.id;
-      dataTransform(model);
+      await dataTransform(model);
       console.log(`save object ${model}`);
       return index.saveObject(model);
     }
-  } else if(change.after.data() === undefined) { // deletion
+  } else if (change.after.data() === undefined) { // deletion
     const ss = change.before;
     console.log(`delete object ${ss.id}`);
     return index.deleteObject(ss.id);
   } else { // updating
     const ss = change.after;
     const model = ss.data();
-    if(model !== undefined) {
+    if (model !== undefined) {
       model.objectID = ss.id;
-      dataTransform(model);
+      await dataTransform(model);
       console.log(`update object ${model}`);
       return index.partialUpdateObject(model);
     }
@@ -91,7 +91,10 @@ exports.algoliaChats = functions.firestore
   .onWrite((change) => {
     console.log(`chat before ${change.before.data()} after ${change.after.data()}`);
 
-    return algoliaUpdate(chatsIndex, change)
+    return algoliaUpdate(
+      chatsIndex,
+      change
+    )
   });
 
 exports.algoliaMessages = functions.firestore
@@ -104,7 +107,7 @@ exports.algoliaMessages = functions.firestore
         await algoliaUpdate(
           messagesIndex,
           change,
-          (data) => {
+          async (data) => {
             data.chatId = context.params.chatId
             data.chatUsers = snapshot.data()["users"]
           }
@@ -206,11 +209,11 @@ exports.clearSavedMessages = functions
     memory: '2GB'
   })
   .https.onCall((data, context) => {
-    // Only allow admin users to execute this function.
+    // Only allow authenticated users to execute this function.
     if (!(context.auth)) {
       throw new functions.https.HttpsError(
         'permission-denied',
-        'Must be an user to initiate delete.'
+        'Must be an user to initiate clear.'
       );
     }
 
@@ -219,9 +222,6 @@ exports.clearSavedMessages = functions
       `User ${context.auth.uid} has requested to delete chat chats/${chatId}/messages`
     );
 
-    // Run a recursive delete on the given document or collection path.
-    // The 'token' must be set in the functions config, and can be generated
-    // at the command line by running 'firebase login:ci'.
     const path = `chats/${chatId}/messages`;
     return firebase_tools.firestore
       .delete(path, {
@@ -234,4 +234,131 @@ exports.clearSavedMessages = functions
           path: path
         };
       });
+  });
+
+exports.deleteChat = functions
+  .runWith({
+    timeoutSeconds: 540,
+    memory: '2GB'
+  })
+  .https.onCall((data, context) => {
+    // Only allow authenticated users to execute this function.
+    if (!(context.auth)) {
+      throw new functions.https.HttpsError(
+        'permission-denied',
+        'Must be an user to initiate delete.'
+      );
+    }
+
+    const chatId = data.chatId;
+    console.log(
+      `User ${context.auth.uid} has requested to delete chat chats/${chatId}/messages`
+    );
+
+    const path = `chats/${chatId}`;
+    return firebase_tools.firestore
+      .delete(path, {
+        project: process.env.GCLOUD_PROJECT,
+        recursive: true,
+        yes: true
+      })
+      .then(() => {
+        return {
+          path: path
+        };
+      });
+  });
+
+exports.createPersonalCorr = functions
+  .runWith({
+    timeoutSeconds: 540,
+    memory: '2GB'
+  })
+  .https.onCall((data, context) => {
+    // Only allow authenticated users to execute this function.
+    if (!(context.auth)) {
+      throw new functions.https.HttpsError(
+        'permission-denied',
+        'Must be an user to initiate create chat (personal corr).'
+      );
+    }
+
+    const currentUserId = context.auth.uid
+    const chat = data.chat;
+    const chatId = data.chatId;
+    console.log(
+      `User ${context.auth.uid} has requested to create chat (personal corr)`
+    );
+
+    const friendId = chat.type.personalCorr.between.find((userId: String) => userId !== currentUserId)
+
+    return Promise.all(
+      chat.type.personalCorr.between
+        .map((betweenUserId: any) => {
+          return db.collection(
+            `users/${betweenUserId === currentUserId ? friendId : currentUserId}/contacts`
+          ).where(
+            "userId",
+            "==",
+            betweenUserId === currentUserId
+              ? currentUserId
+              : friendId
+          ).limit(1).get()
+        })
+    ).then(async (snapshots) => {
+      chat.type.personalCorr.betweenNames = await Promise.all(
+        snapshots.map(async (snap: any, index) => {
+          if (snap.empty) {
+            const user = await db.doc(`users/${chat.type.personalCorr.between[index]}`).get()
+            const userData = user.data()
+            if ("name" in userData && "surname" in userData) {
+              return userData.name + " " + userData.surname;
+            } else {
+              return "DELETED";
+            }
+          }
+
+          const docData = snap.docs[0].data()
+          if ("localName" in docData) {
+            return docData.localName;
+          }
+        })
+      )
+
+      chat.lastMessage.timestamp = FieldValue.serverTimestamp()
+
+      await db.doc(`chats/${chatId}`).set(chat)
+    })
+  });
+
+exports.personalCorrNames = functions.firestore
+  .document("users/{userId}/contacts/{contactId}")
+  .onUpdate((change, context) => {
+    const contact = change.after.data()
+    if (contact && "userId" in contact) {
+      return db.collection("chats")
+        .where('type.personalCorr.between', 'array-contains', contact.userId)
+        .get()
+        .then(async (personalCorrs: any) => {
+          for (const personalCorrDoc of personalCorrs.docs) {
+            const personalCorrData = personalCorrDoc.data()
+            if (personalCorrData) {
+              const betweenNames = personalCorrData.type.personalCorr.betweenNames
+              const updateIndex = personalCorrData.type.personalCorr.between
+                .indexOf(contact.userId)
+              betweenNames[updateIndex] = contact.localName
+              await db.doc(`chats/${personalCorrDoc.id}`).set({
+                type: {
+                  personalCorr: {
+                    betweenNames: betweenNames
+                  }
+                }}, {merge: true}).catch((err: any) => "error while update personal corr! " + err);
+            }
+          }
+        })
+        .catch((err: any) => {
+          console.log("Error getting documents", err);
+        })
+    }
+    return null
   });
