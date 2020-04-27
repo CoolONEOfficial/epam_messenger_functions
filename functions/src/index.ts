@@ -331,9 +331,10 @@ exports.createPersonalCorr = functions
     })
   });
 
-exports.personalCorrNames = functions.firestore
+exports.personalCorrNamesSync = functions.firestore
   .document("users/{userId}/contacts/{contactId}")
   .onWrite((change, context) => {
+    const currentUserId = context.params.userId
     const oldContact = change.before.data()
     if (oldContact === undefined) {
       return null
@@ -343,7 +344,9 @@ exports.personalCorrNames = functions.firestore
     if ((contact && "userId" in contact) || "userId" in oldContact) {
       const contactUserId = contact !== undefined ? contact.userId : oldContact.userId
       return db.collection("chats")
-        .where('type.personalCorr.between', 'array-contains', contactUserId)
+        .where('type.personalCorr.between', 'in',
+          [[contactUserId, currentUserId], [currentUserId, contactUserId]])
+        .limit(1)
         .get()
         .then(async (personalCorrs: any) => {
           for (const personalCorrDoc of personalCorrs.docs) {
@@ -373,6 +376,41 @@ exports.personalCorrNames = functions.firestore
         })
         .catch((err: any) => {
           console.log("Error getting documents", err);
+        })
+    }
+    return null
+  });
+
+exports.personalCorrNamesUsers = functions.firestore
+  .document("users/{userId}")
+  .onUpdate((change, context) => {
+    const beforeData = change.before.data();
+    const afterData = change.after.data();
+    if (beforeData && "name" in beforeData && "surname" in beforeData
+      && afterData && "name" in afterData && "surname" in afterData) {
+      const oldName = beforeData.name + " " + beforeData.surname
+      const newName = afterData.name + " " + afterData.surname
+      return db.collection("chats")
+        //.where("type.personalCorr.between", "array-contains", context.params.userId)
+        .where("type.personalCorr.betweenNames", "array-contains", oldName)
+        .get()
+        .then(async (personalCorrs: any) => {
+          for (const personalCorrDoc of personalCorrs.docs) {
+            const personalCorrData = personalCorrDoc.data()
+            if (personalCorrData) {
+              const betweenNames = personalCorrData.type.personalCorr.betweenNames
+              const updateIndex = betweenNames
+                .indexOf(oldName)
+              betweenNames[updateIndex] = newName
+
+              await db.doc(`chats/${personalCorrDoc.id}`).update({
+                "type.personalCorr.betweenNames": betweenNames
+              }).catch((err: any) => "error while update personal corr! " + err);
+            }
+          }
+        })
+        .catch((err: any) => {
+          console.log("Error getting personal corrs", err);
         })
     }
     return null
